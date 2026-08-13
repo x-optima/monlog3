@@ -1,0 +1,38 @@
+# Filebeat читает журналы контейнеров Docker на хосте и отправляет их в Logstash.
+
+filebeat.inputs:
+  - type: filestream
+    id: docker-container-logs
+    enabled: true
+    # В каталоге Docker имена файлов журналов часто являются символическими ссылками.
+    prospector.scanner.symlinks: true
+    paths:
+      - /var/lib/docker/containers/*/*.log
+    parsers:
+      - container:
+          stream: all
+          format: docker
+
+processors:
+  - add_docker_metadata:
+      host: "unix:///var/run/docker.sock"
+  # Свои журналы Filebeat не отправляем: иначе поток быстро разрастается.
+  - drop_event:
+      when:
+        or:
+          - equals:
+              container.name: filebeat
+          - equals:
+              docker.container.name: filebeat
+
+# Индекс создаёт Logstash (logstash-*), шаблоны и панели Filebeat не нужны.
+setup.template.enabled: false
+setup.ilm.enabled: false
+setup.dashboards.enabled: false
+
+output.logstash:
+  hosts: ["logstash:5044"]
+
+logging.level: info
+logging.to_files: false
+logging.to_stderr: true

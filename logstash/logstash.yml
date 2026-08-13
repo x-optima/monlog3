@@ -1,0 +1,8 @@
+# Основные параметры процесса Logstash (конвейер — в pipeline/logstash.conf).
+
+http.host: "0.0.0.0"
+xpack.monitoring.enabled: false
+xpack.management.enabled: false
+
+# Каталог с файлами *.conf подключается томом в docker-compose.yml.
+path.config: /usr/share/logstash/pipeline

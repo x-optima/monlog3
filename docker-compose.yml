@@ -1,0 +1,170 @@
+# Учебный стенд Elastic Stack.
+# Пять контейнеров: Elasticsearch (hot), Elasticsearch (warm), Logstash, Kibana, Filebeat.
+#
+# Перед первым запуском на хосте:
+#   sudo sysctl -w vm.max_map_count=262144
+#
+# Данные пишутся в ./data/ (раздел /home): раздел / занят образами Docker.
+# Временные файлы Java — в памяти (tmpfs), не на заполненном корневом диске.
+#
+# Запуск:
+#   docker compose up -d
+#
+# Опциональный генератор JSON-событий (шестой контейнер, для задания 2):
+#   docker compose --profile demo up -d
+#
+# Остановка:
+#   docker compose --profile demo down
+
+name: monlog3
+
+services:
+
+  # Узел Elasticsearch: приём новых записей, системные индексы, роль master.
+  es-hot:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
+    container_name: es-hot
+    restart: unless-stopped
+    environment:
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      ES_TMPDIR: /usr/share/elasticsearch/tmp
+    volumes:
+      - ./elasticsearch/hot.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+      - ./data/es-hot/data:/usr/share/elasticsearch/data
+      - ./data/es-hot/tmp:/usr/share/elasticsearch/tmp
+      - ./data/es-hot/logs:/usr/share/elasticsearch/logs
+    tmpfs:
+      - /tmp:size=256m
+    ports:
+      - "9200:9200"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200 >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    networks:
+      - elastic
+
+  # Узел Elasticsearch: более холодные данные (уровень warm).
+  es-warm:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
+    container_name: es-warm
+    restart: unless-stopped
+    environment:
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      ES_TMPDIR: /usr/share/elasticsearch/tmp
+    volumes:
+      - ./elasticsearch/warm.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+      - ./data/es-warm/data:/usr/share/elasticsearch/data
+      - ./data/es-warm/tmp:/usr/share/elasticsearch/tmp
+      - ./data/es-warm/logs:/usr/share/elasticsearch/logs
+    tmpfs:
+      - /tmp:size=256m
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    depends_on:
+      es-hot:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200 >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    networks:
+      - elastic
+
+  # Приём событий, преобразование, запись в Elasticsearch.
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.17.0
+    container_name: logstash
+    restart: unless-stopped
+    environment:
+      LS_JAVA_OPTS: -Xms256m -Xmx256m
+    volumes:
+      - ./logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+      - ./logstash/pipeline/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+      - ./data/logstash/data:/usr/share/logstash/data
+    tmpfs:
+      - /tmp:size=128m
+    ports:
+      - "5044:5044"
+      - "5000:5000"
+    depends_on:
+      es-hot:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9600 >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 20
+    networks:
+      - elastic
+
+  # Веб-интерфейс: поиск по индексам, шаблоны индексов, Discover.
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.17.0
+    container_name: kibana
+    restart: unless-stopped
+    volumes:
+      - ./kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+      - ./data/kibana/data:/usr/share/kibana/data
+    tmpfs:
+      - /tmp:size=128m
+    ports:
+      - "5601:5601"
+    depends_on:
+      es-hot:
+        condition: service_healthy
+    networks:
+      - elastic
+
+  # Сбор журналов Docker на хосте и отправка в Logstash.
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.17.0
+    container_name: filebeat
+    restart: unless-stopped
+    user: root
+    command: ["-e", "--strict.perms=false"]
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      # Snap Docker хранит журналы контейнеров здесь, а не в /var/lib/docker.
+      - /var/snap/docker/common/var-lib-docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./data/filebeat:/usr/share/filebeat/data
+    depends_on:
+      logstash:
+        condition: service_healthy
+    networks:
+      - elastic
+
+  # Не входит в обязательные пять контейнеров.
+  # Запуск: docker compose --profile demo up -d
+  dummy:
+    image: python:3.12-alpine
+    container_name: dummy
+    restart: unless-stopped
+    profiles: ["demo"]
+    volumes:
+      - ./dummy/generate.py:/generate.py:ro
+    command: ["python", "/generate.py"]
+    depends_on:
+      logstash:
+        condition: service_healthy
+    networks:
+      - elastic
+
+networks:
+  elastic:
+    driver: bridge

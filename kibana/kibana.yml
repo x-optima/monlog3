@@ -1,0 +1,11 @@
+# Веб-интерфейс Kibana. Подключение к HTTP API узла hot.
+# Проверка доступа берётся из Elasticsearch (там она уже выключена).
+
+server.name: kibana
+server.host: "0.0.0.0"
+server.shutdownTimeout: 5s
+
+elasticsearch.hosts: ["http://es-hot:9200"]
+
+monitoring.ui.container.elasticsearch.enabled: true
+telemetry.enabled: false

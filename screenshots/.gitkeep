@@ -1,0 +1,5 @@
+# Скриншоты для сдачи:
+#   scr1_1.png — docker ps (пять контейнеров, спустя ~5 минут)
+#   scr1_2.png — интерфейс Kibana
+#   scr2_1.png — созданные index patterns / Data Views
+#   scr2_2.png — Discover с событиями logstash-*
